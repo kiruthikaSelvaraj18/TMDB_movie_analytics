@@ -1,0 +1,51 @@
+import pandas as pd
+df=pd.read_csv("movies.csv")
+print (df)
+
+print (df.shape)
+print (df.isnull())
+print (df.isnull().sum())
+print (df.dtypes)
+print (df["release_date"].unique())
+df["release_date"]=pd.to_datetime(df["release_date"])
+print (df["release_date"])
+print (df.columns)
+df["movie_id"]=df["movie_id"].astype("int64")
+print (df["movie_id"])
+df["runtime"]=df["runtime"].astype("int64")
+print (df["runtime"])
+df["budget"]=df["budget"].astype("int64")
+print (df["budget"])
+df["revenue"]=df["revenue"].astype("int64")
+print (df["revenue"])
+df["vote_count"]=df["vote_count"].astype("int64")
+print (df["vote_count"])
+df["vote_average"]=df["vote_average"].astype("float64")
+print (df["vote_average"])
+df["popularity"]=df["popularity"].astype("float64")
+print (df["popularity"])
+
+print (df.info)
+print (df.dtypes)
+
+print (df.duplicated().sum())
+print (df[df.duplicated(keep=False)])
+df = df.drop_duplicates(subset=["movie_id"], keep="first").reset_index(drop=True)
+print("Remaining duplicates:", df.duplicated().sum())
+print("New shape:", df.shape)
+print (df.duplicated().sum())
+df["title"] = df["title"].astype(str).str.strip()
+df["original_language"] = df["original_language"].astype(str).str.strip()
+df["status"] = df["status"].astype(str).str.strip()
+df["overview"] = df["overview"].astype(str).str.strip()
+
+text_columns = ["title", "original_language", "status", "overview"]
+for col in text_columns:
+    df[col] = df[col].astype(str).str.strip()
+    print (df)
+print (df.columns)
+valid_movie_ids=set(df["movie_id"])
+print(f"\nSuccessfully verified {len(valid_movie_ids)} valid movie IDs.")
+
+df.to_csv("cleaned_movies.csv", index=False)
+
