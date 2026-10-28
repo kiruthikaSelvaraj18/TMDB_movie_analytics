@@ -4,9 +4,6 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# =============================================================
-# 0. CONFIGURATION & DATABASE CONNECTIVITY
-# =============================================================
 st.set_page_config(
     page_title="TMDB Movie Analytics",
     page_icon="🎬",
@@ -32,7 +29,7 @@ def get_all_tables():
     keywords = pd.read_sql_query("SELECT * FROM movie_keywords", conn)
     conn.close()
 
-    # Numeric formatting
+
     movies["budget"] = pd.to_numeric(movies["budget"], errors="coerce").fillna(0)
     movies["revenue"] = pd.to_numeric(movies["revenue"], errors="coerce").fillna(0)
     movies["runtime"] = pd.to_numeric(movies["runtime"], errors="coerce").fillna(0)
@@ -44,16 +41,13 @@ def get_all_tables():
 
 movies_df, genres_df, movie_genres_df, cast_df, crew_df, keywords_df = get_all_tables()
 
-# Session state initialization
+
 if "nav_page" not in st.session_state:
     st.session_state["nav_page"] = "🏠 Home"
 if "exit_submitted" not in st.session_state:
     st.session_state["exit_submitted"] = False
 
 
-# =============================================================
-# 1. SIDEBAR NAVIGATION
-# =============================================================
 st.sidebar.title("🎬 Navigation")
 pages = ["🏠 Home", "📊 Dashboard Overview", "🔍 Query Explorer", "🚪 Exit"]
 
@@ -69,9 +63,6 @@ if selected_page != st.session_state["nav_page"]:
     st.rerun()
 
 
-# =============================================================
-# PAGE 1: 🏠 HOME PAGE
-# =============================================================
 if st.session_state["nav_page"] == "🏠 Home":
     st.markdown(
         """
@@ -115,9 +106,6 @@ if st.session_state["nav_page"] == "🏠 Home":
             st.rerun()
 
 
-# =============================================================
-# PAGE 2: 📊 DASHBOARD OVERVIEW
-# =============================================================
 elif st.session_state["nav_page"] == "📊 Dashboard Overview":
     st.title("📊 Movie Analytics Dashboard")
     st.markdown("---")
@@ -216,18 +204,15 @@ elif st.session_state["nav_page"] == "📊 Dashboard Overview":
     )
 
 
-# =============================================================
-# PAGE 3: 🔍 QUERY EXPLORER
-# =============================================================
 elif st.session_state["nav_page"] == "🔍 Query Explorer":
     st.title("🔍 Analytical Query Explorer")
     st.markdown("---")
 
     engine_choice = st.radio("Select Engine Mode:", ["SQL Analysis", "Pandas Analysis"], horizontal=True)
 
-    # ---------------------------------------------------------
-    # SQL TASKS (Q1 - Q10) - USING EXACT SCHEMA COLUMNS
-    # ---------------------------------------------------------
+    
+    # SQL(Q1 - Q10)
+
     if engine_choice == "SQL Analysis":
         sql_options = [
             "Q1: Action Movies Released After 2015",
@@ -461,9 +446,9 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             st.dataframe(df_res, use_container_width=True, hide_index=True)
             st.info("💡 **Insight**: Deep lore and multi-genre films require higher keyword densities.")
 
-    # ---------------------------------------------------------
-    # PANDAS TASKS (P1 - P10)
-    # ---------------------------------------------------------
+   
+    # PANDAS(P1 - P10)
+    
     elif engine_choice == "Pandas Analysis":
         pandas_options = [
             "P1: Unique Entities Count Across Tables",
@@ -720,9 +705,7 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             st.info("💡 **Insight**: Cultural blockbusters and viral franchise entries drive extraordinary spikes in TMDB popularity metrics.")
 
 
-# =============================================================
-# PAGE 4: 🚪 EXIT
-# =============================================================
+
 elif st.session_state["nav_page"] == "🚪 Exit":
     if st.session_state["exit_submitted"]:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
