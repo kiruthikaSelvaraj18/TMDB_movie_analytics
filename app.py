@@ -4,12 +4,16 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+# =============================================================
+# 0. CONFIGURATION & DATABASE CONNECTIVITY
+# =============================================================
 st.set_page_config(
     page_title="TMDB Movie Analytics",
     page_icon="🎬",
     layout="wide"
 )
 
+# Robust database query runner
 def run_query(query):
     conn = sqlite3.connect("tmdb_movies.db")
     try:
@@ -17,6 +21,22 @@ def run_query(query):
     finally:
         conn.close()
     return df
+
+# Inspect SQLite table columns dynamically so no column error occurs
+def get_db_columns(tbl):
+    conn = sqlite3.connect("tmdb_movies.db")
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({tbl});").fetchall()]
+    conn.close()
+    return cols
+
+crew_cols = [c.lower() for c in get_db_columns("crew")]
+cast_cols = [c.lower() for c in get_db_columns("cast")]
+kw_cols = [c.lower() for c in get_db_columns("movie_keywords")]
+
+# Exact column matching for your database schema
+director_col = "director_name" if "director_name" in crew_cols else ("name" if "name" in crew_cols else "person_name")
+actor_col = "actor_name" if "actor_name" in cast_cols else ("name" if "name" in cast_cols else "person_name")
+keyword_col = "keyword" if "keyword" in kw_cols else ("keywords" if "keywords" in kw_cols else "keyword_name")
 
 @st.cache_data
 def get_all_tables():
@@ -29,40 +49,144 @@ def get_all_tables():
     keywords = pd.read_sql_query("SELECT * FROM movie_keywords", conn)
     conn.close()
 
-
+    # Pre-clean numeric fields
     movies["budget"] = pd.to_numeric(movies["budget"], errors="coerce").fillna(0)
     movies["revenue"] = pd.to_numeric(movies["revenue"], errors="coerce").fillna(0)
     movies["runtime"] = pd.to_numeric(movies["runtime"], errors="coerce").fillna(0)
     movies["vote_average"] = pd.to_numeric(movies["vote_average"], errors="coerce").fillna(0)
     movies["popularity"] = pd.to_numeric(movies["popularity"], errors="coerce").fillna(0)
     movies["release_year"] = pd.to_datetime(movies["release_date"], errors="coerce").dt.year
+    if "original_language" not in movies.columns:
+        movies["original_language"] = "en"
+    movies["original_language"] = movies["original_language"].fillna("en")
 
     return movies, genres, movie_genres, cast, crew, keywords
 
 movies_df, genres_df, movie_genres_df, cast_df, crew_df, keywords_df = get_all_tables()
 
-
+# Initialize session state variables
 if "nav_page" not in st.session_state:
     st.session_state["nav_page"] = "🏠 Home"
 if "exit_submitted" not in st.session_state:
     st.session_state["exit_submitted"] = False
 
+genre_names_list = sorted(genres_df["genre_name"].dropna().unique().tolist())
+min_yr = int(movies_df["release_year"].dropna().min())
+max_yr = int(movies_df["release_year"].dropna().max())
+languages_list = ["All"] + sorted(movies_df["original_language"].dropna().unique().tolist())
 
-st.sidebar.title("🎬 Navigation")
-pages = ["🏠 Home", "📊 Dashboard Overview", "🔍 Query Explorer", "🚪 Exit"]
+# Default filter values stored in session state
+if "selected_genres" not in st.session_state:
+    st.session_state["selected_genres"] = ["Action", "Drama", "Comedy"] if set(["Action", "Drama", "Comedy"]).issubset(genre_names_list) else [genre_names_list[0]]
+if "year_range" not in st.session_state:
+    st.session_state["year_range"] = (1990, 2020)
+if "min_rating" not in st.session_state:
+    st.session_state["min_rating"] = 5.0
+if "selected_language" not in st.session_state:
+    st.session_state["selected_language"] = "All"
 
-selected_page = st.sidebar.radio(
-    "Navigate to:",
-    pages,
-    index=pages.index(st.session_state["nav_page"]) if st.session_state["nav_page"] in pages else 0
-)
 
-if selected_page != st.session_state["nav_page"]:
+# =============================================================
+# 1. SIDEBAR NAVIGATION
+# =============================================================
+if st.session_state["nav_page"] == "🚪 Exit" and st.session_state["exit_submitted"]:
+    st.markdown(
+        """
+        <style>
+            [data-testid="stSidebar"] {display: none;}
+            [data-testid="collapsedControl"] {display: none;}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+elif st.session_state["nav_page"] in ["📊 Dashboard Overview", "🔍 Query Explorer"]:
+    st.sidebar.title("🎬 Navigation")
+    if st.sidebar.button("🏠 Return to Homepage", use_container_width=True):
+        st.session_state["nav_page"] = "🏠 Home"
+        st.rerun()
+
+    pages = ["📊 Dashboard Overview", "🔍 Query Explorer", "🚪 Exit"]
+    selected_page = st.sidebar.radio(
+        "Current View:",
+        pages,
+        index=pages.index(st.session_state["nav_page"]) if st.session_state["nav_page"] in pages else 0
+    )
+    if selected_page != st.session_state["nav_page"]:
+        st.session_state["nav_page"] = selected_page
+        st.rerun()
+else:
+    st.sidebar.title("🎬 Navigation")
+    pages = ["🏠 Home", "📊 Dashboard Overview", "🔍 Query Explorer", "🚪 Exit"]
+    selected_page = st.sidebar.radio(
+        "Navigate to:",
+        pages,
+        index=pages.index(st.session_state["nav_page"]) if st.session_state["nav_page"] in pages else 0
+    )
     st.session_state["nav_page"] = selected_page
-    st.session_state["exit_submitted"] = False
-    st.rerun()
 
 
+# =============================================================
+# 2. SHARED FILTERS (VISIBLE ONLY ON DASHBOARD OVERVIEW)
+# =============================================================
+if st.session_state["nav_page"] == "📊 Dashboard Overview":
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🎛️ Shared Filters")
+
+    st.session_state["selected_genres"] = st.sidebar.multiselect(
+        "Select Genre(s):",
+        options=genre_names_list,
+        default=st.session_state["selected_genres"]
+    )
+
+    st.session_state["year_range"] = st.sidebar.slider(
+        "Release Year Range:",
+        min_yr, max_yr,
+        st.session_state["year_range"]
+    )
+
+    st.session_state["min_rating"] = st.sidebar.slider(
+        "Minimum Rating (0 to 10):",
+        0.0, 10.0,
+        float(st.session_state["min_rating"]),
+        step=0.5
+    )
+
+    st.session_state["selected_language"] = st.sidebar.selectbox(
+        "Original Language:",
+        options=languages_list,
+        index=languages_list.index(st.session_state["selected_language"]) if st.session_state["selected_language"] in languages_list else 0
+    )
+
+    # Dynamic filter SQL construction
+    genre_filter_sql = ""
+    if st.session_state["selected_genres"]:
+        quoted_genres = ", ".join(f"'{g}'" for g in st.session_state["selected_genres"])
+        genre_filter_sql = f"AND g.genre_name IN ({quoted_genres})"
+
+    lang_filter_sql = ""
+    if st.session_state["selected_language"] != "All":
+        lang_filter_sql = f"AND m.original_language = '{st.session_state['selected_language']}'"
+
+    filter_sql = f"""
+    SELECT DISTINCT m.movie_id, m.title, m.release_date, m.budget, m.revenue, 
+           m.vote_average, m.popularity, m.original_language, g.genre_name
+    FROM movies m
+    JOIN movie_genres mg ON m.movie_id = mg.movie_id
+    JOIN genres g ON mg.genre_id = g.genre_id
+    WHERE m.vote_average >= {st.session_state['min_rating']}
+      AND strftime('%Y', m.release_date) BETWEEN '{st.session_state['year_range'][0]}' AND '{st.session_state['year_range'][1]}'
+      {genre_filter_sql}
+      {lang_filter_sql}
+    """
+    filtered_movies = run_query(filter_sql)
+    matching_movie_ids = filtered_movies["movie_id"].unique().tolist()
+    live_count = len(matching_movie_ids)
+    st.sidebar.markdown(f"**🎯 Matching Movies: `{live_count:,}`**")
+
+
+# =============================================================
+# PAGE 1: 🏠 HOME PAGE
+# =============================================================
 if st.session_state["nav_page"] == "🏠 Home":
     st.markdown(
         """
@@ -106,56 +230,35 @@ if st.session_state["nav_page"] == "🏠 Home":
             st.rerun()
 
 
+# =============================================================
+# PAGE 2: 📊 DASHBOARD OVERVIEW
+# =============================================================
 elif st.session_state["nav_page"] == "📊 Dashboard Overview":
     st.title("📊 Movie Analytics Dashboard")
     st.markdown("---")
 
-    st.sidebar.markdown("### 🎛️ Filter Controls")
-    genre_names_list = sorted(genres_df["genre_name"].dropna().unique().tolist())
-    selected_genres = st.sidebar.multiselect(
-        "Select Genre(s):",
-        options=genre_names_list,
-        default=["Action", "Drama", "Comedy"] if set(["Action", "Drama", "Comedy"]).issubset(genre_names_list) else [genre_names_list[0]]
-    )
-
-    min_yr = int(movies_df["release_year"].dropna().min())
-    max_yr = int(movies_df["release_year"].dropna().max())
-    year_range = st.sidebar.slider("Release Year Range:", min_yr, max_yr, (1990, 2020))
-    min_rating = st.sidebar.slider("Minimum Rating (0 to 10):", 0.0, 10.0, 5.5, step=0.5)
-    only_financials = st.sidebar.toggle("Only show films with recorded budget & revenue", value=False)
-
-    genre_filter_sql = ""
-    if selected_genres:
-        quoted_genres = ", ".join(f"'{g}'" for g in selected_genres)
-        genre_filter_sql = f"AND g.genre_name IN ({quoted_genres})"
-
-    financial_filter_sql = "AND m.budget > 0 AND m.revenue > 0" if only_financials else ""
-
-    filter_sql = f"""
-    SELECT DISTINCT m.movie_id, m.title, m.release_date, m.budget, m.revenue, m.vote_average, m.popularity, g.genre_name
-    FROM movies m
-    JOIN movie_genres mg ON m.movie_id = mg.movie_id
-    JOIN genres g ON mg.genre_id = g.genre_id
-    WHERE m.vote_average >= {min_rating}
-      AND strftime('%Y', m.release_date) BETWEEN '{year_range[0]}' AND '{year_range[1]}'
-      {genre_filter_sql}
-      {financial_filter_sql}
-    """
-    filtered_movies = run_query(filter_sql)
-
+    # 4 Specific Required KPIs
     col1, col2, col3, col4 = st.columns(4)
-    total_count = filtered_movies["movie_id"].nunique()
-    avg_score = round(filtered_movies["vote_average"].mean(), 2) if total_count > 0 else 0
-    total_rev = filtered_movies[filtered_movies["revenue"] > 0]["revenue"].sum()
-    avg_bud = filtered_movies[filtered_movies["budget"] > 0]["budget"].mean()
+    filtered_actors = cast_df[cast_df["movie_id"].isin(matching_movie_ids)]
+    total_actors = filtered_actors[actor_col].nunique() if not filtered_actors.empty else 0
+    total_genres = filtered_movies["genre_name"].nunique() if live_count > 0 else 0
+    avg_rating = round(filtered_movies["vote_average"].mean(), 2) if live_count > 0 else 0.0
 
-    col1.metric("Total Movies", f"{total_count:,}")
-    col2.metric("Average Rating", f"{avg_score} / 10")
-    col3.metric("Total Box Office", f"${total_rev / 1e9:.2f} B" if total_rev > 0 else "$0")
-    col4.metric("Avg Budget", f"${avg_bud / 1e6:.1f} M" if pd.notnull(avg_bud) else "$0")
+    col1.metric("Total Movies", f"{live_count:,}")
+    col2.metric("Total Genres Represented", f"{total_genres}")
+    col3.metric("Total Actors", f"{total_actors:,}")
+    col4.metric("Average Rating", f"{avg_rating} / 10")
 
     st.markdown("---")
 
+    # Dynamic Auto-Generated Text Insight
+    if live_count > 0:
+        genre_rev = filtered_movies[filtered_movies["revenue"] > 0].groupby("genre_name")["revenue"].sum()
+        top_genre = genre_rev.idxmax() if not genre_rev.empty else "N/A"
+        top_movie = filtered_movies.sort_values("revenue", ascending=False).iloc[0]["title"] if not filtered_movies.empty else "N/A"
+        st.info(f"💡 **Automated Filter Insight**: In this active selection, **{top_genre}** generates the highest cumulative revenue, led by **'{top_movie}'**.")
+
+    # Charts: Top 10 Revenue + Genre Distribution
     ch1, ch2 = st.columns(2)
     with ch1:
         st.subheader("Top 10 Highest-Grossing Films")
@@ -170,7 +273,7 @@ elif st.session_state["nav_page"] == "📊 Dashboard Overview":
             st.info("No recorded box office revenue for this filter selection.")
 
     with ch2:
-        st.subheader("Selected Genre Proportions")
+        st.subheader("Genre Distribution")
         g_counts = filtered_movies["genre_name"].value_counts().head(7)
         if not g_counts.empty:
             fig, ax = plt.subplots(figsize=(6.5, 3.8))
@@ -181,6 +284,20 @@ elif st.session_state["nav_page"] == "📊 Dashboard Overview":
         else:
             st.info("No genre records available.")
 
+    # Chart 3: Budget vs Revenue Scatter Plot
+    st.subheader("Budget vs Revenue Correlation")
+    fin_df = filtered_movies[(filtered_movies["budget"] > 0) & (filtered_movies["revenue"] > 0)].drop_duplicates("movie_id")
+    if not fin_df.empty:
+        fig_sc, ax_sc = plt.subplots(figsize=(8, 3.8))
+        ax_sc.scatter(fin_df["budget"] / 1e6, fin_df["revenue"] / 1e6, alpha=0.6, color="darkviolet", edgecolors="none")
+        ax_sc.set_xlabel("Budget ($ Millions)")
+        ax_sc.set_ylabel("Revenue ($ Millions)")
+        ax_sc.grid(True, linestyle="--", alpha=0.4)
+        st.pyplot(fig_sc)
+    else:
+        st.info("No films with both budget and revenue > 0 match the selected filters.")
+
+    # Properly sized table
     st.markdown("---")
     st.subheader("🎬 Filtered Movie Records")
     display_df = (
@@ -192,27 +309,30 @@ elif st.session_state["nav_page"] == "📊 Dashboard Overview":
     st.dataframe(
         display_df,
         column_config={
-            "title": st.column_config.TextColumn("Movie Title"),
-            "genre_name": st.column_config.TextColumn("Genre"),
-            "release_date": st.column_config.TextColumn("Release Date"),
-            "vote_average": st.column_config.NumberColumn("Rating", format="%.1f"),
-            "budget": st.column_config.NumberColumn("Budget ($)", format="$%,d"),
-            "revenue": st.column_config.NumberColumn("Revenue ($)", format="$%,d"),
+            "title": st.column_config.TextColumn("Movie Title", width=220),
+            "genre_name": st.column_config.TextColumn("Genre", width=110),
+            "release_date": st.column_config.TextColumn("Release Date", width=120),
+            "vote_average": st.column_config.NumberColumn("Rating", format="%.1f", width=90),
+            "budget": st.column_config.NumberColumn("Budget ($)", format="$%,d", width=130),
+            "revenue": st.column_config.NumberColumn("Revenue ($)", format="$%,d", width=140),
         },
         use_container_width=True,
         hide_index=True
     )
 
 
+# =============================================================
+# PAGE 3: 🔍 QUERY EXPLORER
+# =============================================================
 elif st.session_state["nav_page"] == "🔍 Query Explorer":
     st.title("🔍 Analytical Query Explorer")
     st.markdown("---")
 
     engine_choice = st.radio("Select Engine Mode:", ["SQL Analysis", "Pandas Analysis"], horizontal=True)
 
-    
-    # SQL(Q1 - Q10)
-
+    # ---------------------------------------------------------
+    # SQL TASKS (Q1 - Q10)
+    # ---------------------------------------------------------
     if engine_choice == "SQL Analysis":
         sql_options = [
             "Q1: Action Movies Released After 2015",
@@ -302,13 +422,9 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             st.info("💡 **Insight**: Animation and Adventure produce the highest box-office return multiples.")
 
         elif chosen_sql.startswith("Q4:"):
-            # Uses verified cast table column: actor_name
-            q = """
-            SELECT c.actor_name, COUNT(DISTINCT c.movie_id) AS movie_count
-            FROM cast c
-            WHERE c.actor_name IS NOT NULL AND TRIM(c.actor_name) != ''
-            GROUP BY c.actor_name 
-            ORDER BY movie_count DESC LIMIT 10;
+            q = f"""
+            SELECT c.{actor_col} AS actor_name, COUNT(c.movie_id) AS movie_count
+            FROM cast c GROUP BY c.{actor_col} ORDER BY movie_count DESC LIMIT 10;
             """
             df_res = run_query(q)
             st.subheader("Top 10 Most Prolific Actors")
@@ -321,14 +437,10 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             st.info("💡 **Insight**: Dependable character actors frequently lead total feature film counts.")
 
         elif chosen_sql.startswith("Q5:"):
-            # Uses verified crew table column: person_name
-            q = """
-            SELECT c.person_name AS director_name, COUNT(DISTINCT c.movie_id) AS movie_count
-            FROM crew c 
-            WHERE c.job = 'Director' AND c.person_name IS NOT NULL AND TRIM(c.person_name) != ''
-            GROUP BY c.person_name 
-            HAVING COUNT(DISTINCT c.movie_id) > 3 
-            ORDER BY movie_count DESC;
+            q = f"""
+            SELECT c.{director_col} AS director_name, COUNT(c.movie_id) AS movie_count
+            FROM crew c WHERE c.job = 'Director'
+            GROUP BY c.{director_col} HAVING COUNT(c.movie_id) > 3 ORDER BY movie_count DESC;
             """
             df_res = run_query(q)
             st.subheader("Active Directors with > 3 Films")
@@ -341,12 +453,11 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             st.info("💡 **Insight**: SQL HAVING effectively isolates directors with long, established studio careers.")
 
         elif chosen_sql.startswith("Q6:"):
-            # Uses verified movie_keywords table column: keyword_name
-            q = """
-            SELECT k.keyword_name AS keyword, COUNT(DISTINCT k.movie_id) AS movie_count
+            q = f"""
+            SELECT k.{keyword_col} AS keyword, COUNT(k.movie_id) AS movie_count
             FROM movie_keywords k 
-            WHERE k.keyword_name IS NOT NULL AND TRIM(k.keyword_name) != ''
-            GROUP BY k.keyword_name 
+            WHERE k.{keyword_col} IS NOT NULL AND TRIM(k.{keyword_col}) != ''
+            GROUP BY k.{keyword_col} 
             ORDER BY movie_count DESC LIMIT 10;
             """
             df_res = run_query(q)
@@ -388,14 +499,13 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             st.info("💡 **Insight**: Subqueries isolate expensive productions that underperformed at the theatrical box office.")
 
         elif chosen_sql.startswith("Q8:"):
-            # Uses verified cast (actor_name) and crew (person_name) columns
-            q = """
-            SELECT DISTINCT c.actor_name, m.title, m.release_date
+            q = f"""
+            SELECT DISTINCT c.{actor_col} AS actor_name, m.title, m.release_date
             FROM cast c
             JOIN crew cr ON c.movie_id = cr.movie_id
             JOIN movies m ON c.movie_id = m.movie_id
-            WHERE cr.job = 'Director' AND cr.person_name = 'Christopher Nolan'
-            ORDER BY m.release_date DESC, c.actor_name ASC;
+            WHERE cr.job = 'Director' AND cr.{director_col} = 'Christopher Nolan'
+            ORDER BY c.{actor_col} ASC;
             """
             df_res = run_query(q)
             st.subheader("Christopher Nolan Collaborations")
@@ -428,9 +538,8 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             st.info("💡 **Insight**: War and History consistently receive higher average audience ratings than Horror.")
 
         elif chosen_sql.startswith("Q10:"):
-            # Uses verified movie_keywords table column: keyword_name
-            q = """
-            SELECT m.title, COUNT(k.keyword_name) AS keyword_count
+            q = f"""
+            SELECT m.title, COUNT(k.{keyword_col}) AS keyword_count
             FROM movies m
             JOIN movie_keywords k ON m.movie_id = k.movie_id
             GROUP BY m.movie_id 
@@ -446,9 +555,9 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             st.dataframe(df_res, use_container_width=True, hide_index=True)
             st.info("💡 **Insight**: Deep lore and multi-genre films require higher keyword densities.")
 
-   
-    # PANDAS(P1 - P10)
-    
+    # ---------------------------------------------------------
+    # PANDAS TASKS (P1 - P10)
+    # ---------------------------------------------------------
     elif engine_choice == "Pandas Analysis":
         pandas_options = [
             "P1: Unique Entities Count Across Tables",
@@ -469,9 +578,9 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             counts = {
                 "Movies": int(movies_df["movie_id"].nunique()),
                 "Genres": int(genres_df["genre_id"].nunique()),
-                "Actors": int(cast_df["person_id"].nunique()),
-                "Crew": int(crew_df["person_id"].nunique()),
-                "Keywords": int(keywords_df["keyword_id"].nunique())
+                "Actors": int(cast_df["person_id"].nunique()) if "person_id" in cast_df.columns else len(cast_df),
+                "Crew": int(crew_df["person_id"].nunique()) if "person_id" in crew_df.columns else len(crew_df),
+                "Keywords": int(keywords_df["keyword_id"].nunique()) if "keyword_id" in keywords_df.columns else len(keywords_df)
             }
             df_res = pd.DataFrame(list(counts.items()), columns=["Entity Category", "Total Count"])
 
@@ -630,7 +739,7 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
 
         elif chosen_p.startswith("P8:"):
             cast_m = cast_df.merge(movies_df, on="movie_id")
-            top_actors = cast_m.groupby("actor_name").agg(
+            top_actors = cast_m.groupby(actor_col).agg(
                 movie_count=("movie_id", "count"),
                 avg_rating=("vote_average", "mean")
             ).sort_values("movie_count", ascending=False).head(10)
@@ -643,7 +752,7 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             ax.set_ylabel("Average Rating")
             st.pyplot(fig)
             st.dataframe(
-                top_actors.reset_index().rename(columns={"actor_name": "Actor Name", "movie_count": "Movie Count", "avg_rating": "Average Rating"}),
+                top_actors.reset_index().rename(columns={actor_col: "Actor Name", "movie_count": "Movie Count", "avg_rating": "Average Rating"}),
                 column_config={"Average Rating": st.column_config.NumberColumn("Average Rating", format="%.2f")},
                 use_container_width=True,
                 hide_index=True
@@ -652,7 +761,6 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
 
         elif chosen_p.startswith("P9:"):
             st.subheader("Frequently Remade / Multi-Release Movie Franchises")
-            
             dupes = movies_df[movies_df.duplicated(subset=["title"], keep=False)].copy()
             dupe_summary = dupes.groupby("title").agg(
                 releases=("release_date", "count")
@@ -689,7 +797,6 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             ax.invert_yaxis()
             ax.set_xlabel("Popularity Score")
             st.pyplot(fig)
-            
             st.dataframe(
                 top_pop[["title", "release_date", "popularity", "vote_count", "vote_average"]],
                 column_config={
@@ -705,7 +812,9 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             st.info("💡 **Insight**: Cultural blockbusters and viral franchise entries drive extraordinary spikes in TMDB popularity metrics.")
 
 
-
+# =============================================================
+# PAGE 4: 🚪 EXIT
+# =============================================================
 elif st.session_state["nav_page"] == "🚪 Exit":
     if st.session_state["exit_submitted"]:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
