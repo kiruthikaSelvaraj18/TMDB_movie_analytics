@@ -4,16 +4,14 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# =============================================================
-# 0. CONFIGURATION & DATABASE CONNECTIVITY
-# =============================================================
+
 st.set_page_config(
     page_title="TMDB Movie Analytics",
     page_icon="🎬",
     layout="wide"
 )
 
-# Robust database query runner
+
 def run_query(query):
     conn = sqlite3.connect("tmdb_movies.db")
     try:
@@ -22,7 +20,6 @@ def run_query(query):
         conn.close()
     return df
 
-# Inspect SQLite table columns dynamically so no column error occurs
 def get_db_columns(tbl):
     conn = sqlite3.connect("tmdb_movies.db")
     cols = [r[1] for r in conn.execute(f"PRAGMA table_info({tbl});").fetchall()]
@@ -33,7 +30,6 @@ crew_cols = [c.lower() for c in get_db_columns("crew")]
 cast_cols = [c.lower() for c in get_db_columns("cast")]
 kw_cols = [c.lower() for c in get_db_columns("movie_keywords")]
 
-# Exact column matching for your database schema
 director_col = "director_name" if "director_name" in crew_cols else ("name" if "name" in crew_cols else "person_name")
 actor_col = "actor_name" if "actor_name" in cast_cols else ("name" if "name" in cast_cols else "person_name")
 keyword_col = "keyword" if "keyword" in kw_cols else ("keywords" if "keywords" in kw_cols else "keyword_name")
@@ -49,7 +45,7 @@ def get_all_tables():
     keywords = pd.read_sql_query("SELECT * FROM movie_keywords", conn)
     conn.close()
 
-    # Pre-clean numeric fields
+
     movies["budget"] = pd.to_numeric(movies["budget"], errors="coerce").fillna(0)
     movies["revenue"] = pd.to_numeric(movies["revenue"], errors="coerce").fillna(0)
     movies["runtime"] = pd.to_numeric(movies["runtime"], errors="coerce").fillna(0)
@@ -64,7 +60,7 @@ def get_all_tables():
 
 movies_df, genres_df, movie_genres_df, cast_df, crew_df, keywords_df = get_all_tables()
 
-# Initialize session state variables
+
 if "nav_page" not in st.session_state:
     st.session_state["nav_page"] = "🏠 Home"
 if "exit_submitted" not in st.session_state:
@@ -75,7 +71,6 @@ min_yr = int(movies_df["release_year"].dropna().min())
 max_yr = int(movies_df["release_year"].dropna().max())
 languages_list = ["All"] + sorted(movies_df["original_language"].dropna().unique().tolist())
 
-# Default filter values stored in session state
 if "selected_genres" not in st.session_state:
     st.session_state["selected_genres"] = ["Action", "Drama", "Comedy"] if set(["Action", "Drama", "Comedy"]).issubset(genre_names_list) else [genre_names_list[0]]
 if "year_range" not in st.session_state:
@@ -86,10 +81,7 @@ if "selected_language" not in st.session_state:
     st.session_state["selected_language"] = "All"
 
 
-# =============================================================
-# 1. SIDEBAR NAVIGATION
-# =============================================================
-if st.session_state["nav_page"] == "🚪 Exit" and st.session_state["exit_submitted"]:
+if st.session_state["nav_page"] == "🚪 Exit":
     st.markdown(
         """
         <style>
@@ -124,10 +116,6 @@ else:
     )
     st.session_state["nav_page"] = selected_page
 
-
-# =============================================================
-# 2. SHARED FILTERS (VISIBLE ONLY ON DASHBOARD OVERVIEW)
-# =============================================================
 if st.session_state["nav_page"] == "📊 Dashboard Overview":
     st.sidebar.markdown("---")
     st.sidebar.subheader("🎛️ Shared Filters")
@@ -157,7 +145,7 @@ if st.session_state["nav_page"] == "📊 Dashboard Overview":
         index=languages_list.index(st.session_state["selected_language"]) if st.session_state["selected_language"] in languages_list else 0
     )
 
-    # Dynamic filter SQL construction
+    
     genre_filter_sql = ""
     if st.session_state["selected_genres"]:
         quoted_genres = ", ".join(f"'{g}'" for g in st.session_state["selected_genres"])
@@ -184,9 +172,7 @@ if st.session_state["nav_page"] == "📊 Dashboard Overview":
     st.sidebar.markdown(f"**🎯 Matching Movies: `{live_count:,}`**")
 
 
-# =============================================================
-# PAGE 1: 🏠 HOME PAGE
-# =============================================================
+
 if st.session_state["nav_page"] == "🏠 Home":
     st.markdown(
         """
@@ -230,14 +216,12 @@ if st.session_state["nav_page"] == "🏠 Home":
             st.rerun()
 
 
-# =============================================================
-# PAGE 2: 📊 DASHBOARD OVERVIEW
-# =============================================================
+
 elif st.session_state["nav_page"] == "📊 Dashboard Overview":
     st.title("📊 Movie Analytics Dashboard")
     st.markdown("---")
 
-    # 4 Specific Required KPIs
+    
     col1, col2, col3, col4 = st.columns(4)
     filtered_actors = cast_df[cast_df["movie_id"].isin(matching_movie_ids)]
     total_actors = filtered_actors[actor_col].nunique() if not filtered_actors.empty else 0
@@ -251,14 +235,14 @@ elif st.session_state["nav_page"] == "📊 Dashboard Overview":
 
     st.markdown("---")
 
-    # Dynamic Auto-Generated Text Insight
+    
     if live_count > 0:
         genre_rev = filtered_movies[filtered_movies["revenue"] > 0].groupby("genre_name")["revenue"].sum()
         top_genre = genre_rev.idxmax() if not genre_rev.empty else "N/A"
         top_movie = filtered_movies.sort_values("revenue", ascending=False).iloc[0]["title"] if not filtered_movies.empty else "N/A"
         st.info(f"💡 **Automated Filter Insight**: In this active selection, **{top_genre}** generates the highest cumulative revenue, led by **'{top_movie}'**.")
 
-    # Charts: Top 10 Revenue + Genre Distribution
+    
     ch1, ch2 = st.columns(2)
     with ch1:
         st.subheader("Top 10 Highest-Grossing Films")
@@ -284,7 +268,7 @@ elif st.session_state["nav_page"] == "📊 Dashboard Overview":
         else:
             st.info("No genre records available.")
 
-    # Chart 3: Budget vs Revenue Scatter Plot
+    
     st.subheader("Budget vs Revenue Correlation")
     fin_df = filtered_movies[(filtered_movies["budget"] > 0) & (filtered_movies["revenue"] > 0)].drop_duplicates("movie_id")
     if not fin_df.empty:
@@ -297,7 +281,7 @@ elif st.session_state["nav_page"] == "📊 Dashboard Overview":
     else:
         st.info("No films with both budget and revenue > 0 match the selected filters.")
 
-    # Properly sized table
+    
     st.markdown("---")
     st.subheader("🎬 Filtered Movie Records")
     display_df = (
@@ -321,18 +305,15 @@ elif st.session_state["nav_page"] == "📊 Dashboard Overview":
     )
 
 
-# =============================================================
-# PAGE 3: 🔍 QUERY EXPLORER
-# =============================================================
 elif st.session_state["nav_page"] == "🔍 Query Explorer":
     st.title("🔍 Analytical Query Explorer")
     st.markdown("---")
 
     engine_choice = st.radio("Select Engine Mode:", ["SQL Analysis", "Pandas Analysis"], horizontal=True)
 
-    # ---------------------------------------------------------
+    
     # SQL TASKS (Q1 - Q10)
-    # ---------------------------------------------------------
+    
     if engine_choice == "SQL Analysis":
         sql_options = [
             "Q1: Action Movies Released After 2015",
@@ -555,9 +536,9 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             st.dataframe(df_res, use_container_width=True, hide_index=True)
             st.info("💡 **Insight**: Deep lore and multi-genre films require higher keyword densities.")
 
-    # ---------------------------------------------------------
+    
     # PANDAS TASKS (P1 - P10)
-    # ---------------------------------------------------------
+    
     elif engine_choice == "Pandas Analysis":
         pandas_options = [
             "P1: Unique Entities Count Across Tables",
@@ -812,64 +793,21 @@ elif st.session_state["nav_page"] == "🔍 Query Explorer":
             st.info("💡 **Insight**: Cultural blockbusters and viral franchise entries drive extraordinary spikes in TMDB popularity metrics.")
 
 
-# =============================================================
-# PAGE 4: 🚪 EXIT
-# =============================================================
+
 elif st.session_state["nav_page"] == "🚪 Exit":
-    if st.session_state["exit_submitted"]:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
-        col_l, col_center, col_r = st.columns([1, 2, 1])
-        with col_center:
-            chosen_rating = st.session_state.get("rating_choice", "😊")
-            smiley_face = chosen_rating.split()[0]
-            
-            st.markdown(
-                f"""
-                <div style="text-align: center; padding: 45px; border-radius: 20px; background: linear-gradient(135deg, #11998e, #38ef7d); color: white; box-shadow: 0 8px 25px rgba(0,0,0,0.2);">
-                    <h1 style="font-size: 3.2rem; font-weight: 700; margin-bottom: 5px;">🎉 Thank You!</h1>
-                    <div style="font-size: 5.5rem; margin: 20px 0;">{smiley_face}</div>
-                    <p style="font-size: 1.25rem; color: #e8f5e9; margin-top: 10px;">Your analytics session is complete.</p>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            st.write("<br>", unsafe_allow_html=True)
-            
-            if st.button("🏠 Return to Homepage & Explore Again", type="primary", use_container_width=True):
-                st.session_state["nav_page"] = "🏠 Home"
-                st.session_state["exit_submitted"] = False
-                st.rerun()
+    st.markdown("<br><br><br>", unsafe_allow_html=True)
+    col_l, col_center, col_r = st.columns([1, 2, 1])
+    with col_center:
+        st.markdown(
+            """
+            <div style="text-align: center; padding: 45px; border-radius: 20px; background: linear-gradient(135deg, #11998e, #38ef7d); color: white; box-shadow: 0 8px 25px rgba(0,0,0,0.2);">
+                <h1 style="font-size: 3.2rem; font-weight: 700; margin: 0;">🎉 Thank You!</h1>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        st.write("<br>", unsafe_allow_html=True)
 
-    else:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        col_l, col_center, col_r = st.columns([1, 2, 1])
-        with col_center:
-            st.markdown(
-                """
-                <div style="text-align: center; padding: 30px; border-radius: 16px; background-color: #f8f9fa; border: 1px solid #e9ecef;">
-                    <h2 style="color: #2c3e50; margin-bottom: 10px;">🎬 Session Exit</h2>
-                    <p style="color: #6c757d; font-size: 1.05rem;">Please select your experience rating before concluding:</p>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            st.write("")
-
-            emoji_rating = st.radio(
-                "Rate your experience:",
-                options=["😡", "🙁", "😐", "😊", "🤩"],
-                index=3,
-                horizontal=True
-            )
-
-            st.write("")
-            c_sub1, c_sub2 = st.columns(2)
-            with c_sub1:
-                if st.button("Submit & Exit", type="primary", use_container_width=True):
-                    st.session_state["exit_submitted"] = True
-                    st.session_state["rating_choice"] = emoji_rating
-                    st.rerun()
-            with c_sub2:
-                if st.button("Cancel (Return Home)", use_container_width=True):
-                    st.session_state["nav_page"] = "🏠 Home"
-                    st.rerun()
+        if st.button("🏠 Return to Homepage & Explore Again", type="primary", use_container_width=True):
+            st.session_state["nav_page"] = "🏠 Home"
+            st.rerun()
